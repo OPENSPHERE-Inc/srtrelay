@@ -27,7 +27,7 @@ RUN GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-w -s" -v -o srtrelay .
 FROM debian:bullseye
 RUN apt-get update && \
     apt-get upgrade -y && \
-    apt-get install --no-install-recommends -y libssl1.1 && \
+    apt-get install --no-install-recommends -y libssl1.1 ca-certificates && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 RUN useradd -l -m -r srtrelay
