@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"sync"
@@ -10,6 +11,9 @@ import (
 
 	"github.com/voc/srtrelay/config"
 	"github.com/voc/srtrelay/srt"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Server serves HTTP API requests
@@ -20,6 +24,8 @@ type Server struct {
 }
 
 func NewServer(conf config.APIConfig, srtServer srt.Server) *Server {
+	prometheus.MustRegister(NewExporter(srtServer))
+	log.Println("Registered server metrics")
 	return &Server{
 		conf:      conf,
 		srtServer: srtServer,
@@ -30,6 +36,7 @@ func (s *Server) Listen(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/streams", s.HandleStreams)
 	mux.HandleFunc("/sockets", s.HandleSockets)
+	mux.Handle("/metrics", promhttp.Handler())
 	serv := &http.Server{
 		Addr:           s.conf.Address,
 		Handler:        mux,
@@ -43,7 +50,7 @@ func (s *Server) Listen(ctx context.Context) error {
 	go func() {
 		defer s.done.Done()
 		err := serv.ListenAndServe()
-		if err != nil && err != http.ErrServerClosed {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Println(err)
 		}
 	}()
