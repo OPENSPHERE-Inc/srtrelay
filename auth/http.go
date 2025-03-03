@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/voc/srtrelay/internal/metrics"
@@ -26,9 +27,17 @@ var requestDurations = promauto.NewHistogramVec(
 	[]string{"url", "application"},
 )
 
+type HttpAuthCache struct {
+	allowed bool
+	expiry  time.Time
+}
+
 type httpAuth struct {
 	config HTTPAuthConfig
 	client *http.Client
+	cacahe map[string]*HttpAuthCache
+	gcTime time.Time
+	mutex  sync.Mutex
 }
 
 type Duration time.Duration
@@ -58,6 +67,16 @@ func NewHTTPAuth(authConfig HTTPAuthConfig) Authenticator {
 			Timeout:   time.Duration(authConfig.Timeout),
 			Transport: promhttp.InstrumentRoundTripperDuration(m, http.DefaultTransport),
 		},
+		cacahe: make(map[string]*HttpAuthCache),
+		gcTime: time.Now().Add(5 * time.Minute),
+	}
+}
+
+func GCAuthCache(cache map[string]*HttpAuthCache) {
+	for key, value := range cache {
+		if value.expiry.Before(time.Now()) {
+			delete(cache, key)
+		}
 	}
 }
 
@@ -68,6 +87,21 @@ func NewHTTPAuth(authConfig HTTPAuthConfig) Authenticator {
 // This should be compatible with nginx-rtmps on_play/on_publish directives.
 // https://github.com/arut/nginx-rtmp-module/wiki/Directives#on_play
 func (h *httpAuth) Authenticate(streamid stream.StreamID) bool {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	// Garbage collect cache every 5 minutes
+	if h.gcTime.Before(time.Now()) {
+		GCAuthCache(h.cacahe)
+		h.gcTime = time.Now().Add(5 * time.Minute)
+	}
+	// Caching results for 5 seconds when failed, 5 minutes when successful
+	if cache, ok := h.cacahe[streamid.String()]; ok {
+		if cache.expiry.After(time.Now()) {
+			return cache.allowed
+		}
+	}
+
 	response, err := h.client.PostForm(h.config.URL, url.Values{
 		"call":                 {streamid.Mode().String()},
 		"app":                  {h.config.Application},
@@ -81,9 +115,17 @@ func (h *httpAuth) Authenticate(streamid stream.StreamID) bool {
 	}
 	defer response.Body.Close()
 
+	res := true
+	expiry := time.Now().Add(5 * time.Minute)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return false
+		res = false
+		expiry = time.Now().Add(5 * time.Second)
 	}
 
-	return true
+	h.cacahe[streamid.String()] = &HttpAuthCache{
+		allowed: res,
+		expiry:  expiry,
+	}
+
+	return res
 }
