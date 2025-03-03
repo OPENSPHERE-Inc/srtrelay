@@ -68,10 +68,10 @@ func (s *RelayImpl) Publish(name string) (chan<- []byte, error) {
 			if !ok {
 				// Need a lock on the map first to stop new subscribers
 				s.mutex.Lock()
+				defer s.mutex.Unlock()
 				log.Println("Unpublished stream", name)
 				delete(s.channels, name)
 				channel.Close()
-				s.mutex.Unlock()
 				return
 			}
 
