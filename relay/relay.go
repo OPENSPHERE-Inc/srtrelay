@@ -18,6 +18,7 @@ type RelayConfig struct {
 }
 
 type Relay interface {
+	ChannelExists(string) bool
 	Publish(string) (chan<- []byte, error)
 	Subscribe(string) (<-chan []byte, UnsubscribeFunc, error)
 	GetStatistics() []*StreamStatistics
@@ -43,6 +44,14 @@ func NewRelay(config *RelayConfig) Relay {
 		channels: make(map[string]*Channel),
 		config:   config,
 	}
+}
+
+func (s *RelayImpl) ChannelExists(name string) bool {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	_, exists := s.channels[name]
+	return exists
 }
 
 // Publish claims a stream name for publishing
